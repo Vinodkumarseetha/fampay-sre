@@ -1,0 +1,50 @@
+groups:
+  - name: service_alerts
+    rules:
+
+      # Service down for > 1 minute
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} has been down for more than 1 minute."
+
+      # High error rate (5xx > 5%)
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(hodor_requests_total{status=~"5.."}[5m]) /
+            rate(hodor_requests_total[5m])
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate on hodor"
+          description: "Error rate is {{ $value | humanizePercentage }} for the last 5 minutes."
+
+      # High p95 latency > 1s
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(hodor_request_duration_seconds_bucket[5m])
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency on hodor"
+          description: "p95 latency is {{ $value }}s."
+
+      # Container memory > 80% of limit
+      - alert: HighMemoryUsage
+        expr: |
+          container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.name }}"

@@ -1,0 +1,146 @@
+version: "3.9"
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+# public  : nginx ↔ hodor, nginx ↔ bran
+# internal: bran ↔ hodor  (hodor has NO access to bran network)
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true   # no external egress; enforces hodor→bran block at network layer
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+
+# ── Services ──────────────────────────────────────────────────────────────────
+services:
+
+  # ── hodor (GoLang) ──────────────────────────────────────────────────────────
+  hodor:
+    build:
+      context: ./hodor
+      dockerfile: Dockerfile
+      args:
+        BUILD_VERSION: "${BUILD_VERSION:-dev}"
+    image: fampay/hodor:${TAG:-latest}
+    restart: unless-stopped
+    networks:
+      - public      # reachable by nginx
+      # NOT on internal → hodor cannot reach bran
+    environment:
+      PORT: "8080"
+      APP_ENV: "${APP_ENV:-production}"
+      APP_VERSION: "${APP_VERSION:-1.0.0}"
+    secrets:
+      - hodor_secret_key
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/hodor/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  # ── bran (Django) ────────────────────────────────────────────────────────────
+  bran:
+    build:
+      context: ./bran
+      dockerfile: Dockerfile
+    image: fampay/bran:${TAG:-latest}
+    restart: unless-stopped
+    networks:
+      - public      # reachable by nginx
+      - internal    # can reach hodor
+    environment:
+      DJANGO_SETTINGS_MODULE: bran.settings
+      APP_ENV: "${APP_ENV:-production}"
+      APP_VERSION: "${APP_VERSION:-1.0.0}"
+      HODOR_INTERNAL_URL: "http://hodor:8080"
+      ALLOWED_HOSTS: "*"
+      GUNICORN_WORKERS: "4"
+      GUNICORN_THREADS: "2"
+    secrets:
+      - bran_secret_key
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/bran/health/')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  # ── nginx reverse proxy ───────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: fampay/nginx:${TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    networks:
+      - public
+    depends_on:
+      hodor:
+        condition: service_healthy
+      bran:
+        condition: service_healthy
+
+  # ── Prometheus (metrics) ──────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    networks:
+      - public
+    ports:
+      - "9090:9090"
+
+  # ── Grafana (dashboards) ──────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.3.3
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - public
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+# ── Docker Secrets (files in ./secrets/) ─────────────────────────────────────
+secrets:
+  hodor_secret_key:
+    file: ./secrets/hodor_secret_key.txt
+  bran_secret_key:
+    file: ./secrets/bran_secret_key.txt

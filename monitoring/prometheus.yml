@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "hodor"
+    static_configs:
+      - targets: ["hodor:8080"]
+    metrics_path: /metrics
+
+  - job_name: "bran"
+    static_configs:
+      - targets: ["bran:8000"]
+    metrics_path: /metrics
+
+  - job_name: "nginx"
+    static_configs:
+      - targets: ["nginx-exporter:9113"]

@@ -1,0 +1,55 @@
+# ── Allow bran → hodor (bran can reach hodor) ─────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bran-to-hodor
+spec:
+  podSelector:
+    matchLabels:
+      app: hodor
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: bran
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Also allow ingress from nginx/ingress-controller
+    - from:
+        - podSelector:
+            matchLabels:
+              app: nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# ── Deny hodor → bran (hodor CANNOT reach bran) ───────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-hodor-to-bran
+spec:
+  podSelector:
+    matchLabels:
+      app: bran
+  ingress:
+    # Bran accepts traffic ONLY from nginx and bran itself (not hodor)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+  # No egress restriction on bran (it can reach hodor)
+---
+# ── Default deny all in namespace ─────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress

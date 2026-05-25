@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fampay-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /hodor(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: hodor-service
+                port:
+                  number: 8080
+          - path: /bran(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: bran-service
+                port:
+                  number: 8000

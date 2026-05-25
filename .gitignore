@@ -1,0 +1,9 @@
+secrets/
+.env
+**/__pycache__/
+*.pyc
+*.pyo
+hodor/hodor
+bran/db.sqlite3
+*.out
+.DS_Store

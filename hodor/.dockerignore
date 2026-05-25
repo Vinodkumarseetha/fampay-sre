@@ -1,0 +1,5 @@
+.git
+*.md
+Makefile
+.env*
+**_test.go

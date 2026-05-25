@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hodor
+  labels:
+    app: hodor
+    version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hodor
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0      # zero-downtime deploy
+  template:
+    metadata:
+      labels:
+        app: hodor
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Spread pods across nodes for HA
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: hodor
+
+      containers:
+        - name: hodor
+          image: fampay/hodor:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: hodor-config
+                  key: APP_ENV
+            - name: APP_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: hodor-config
+                  key: APP_VERSION
+            - name: HODOR_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hodor-secrets
+                  key: secret_key
+          livenessProbe:
+            httpGet:
+              path: /hodor/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /hodor/ready
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false

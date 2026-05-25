@@ -1,0 +1,180 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/fampay
+
+jobs:
+  # ── Test & Lint ──────────────────────────────────────────────────────────────
+  test-hodor:
+    name: Test Hodor (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: hodor/go.sum
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          working-directory: hodor
+
+      - name: Test
+        working-directory: hodor
+        run: go test ./... -race -coverprofile=coverage.out
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: hodor/coverage.out
+
+  test-bran:
+    name: Test Bran (Django)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        working-directory: bran
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: bran
+        env:
+          DJANGO_SECRET_KEY: test-secret-key-for-ci
+          APP_ENV: test
+          ALLOWED_HOSTS: "*"
+        run: python manage.py test --verbosity=2
+
+  # ── Build & Push Docker images ───────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [test-hodor, test-bran]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (hodor)
+        id: meta-hodor
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/hodor
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push hodor
+        uses: docker/build-push-action@v5
+        with:
+          context: ./hodor
+          push: true
+          tags: ${{ steps.meta-hodor.outputs.tags }}
+          labels: ${{ steps.meta-hodor.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+
+      - name: Extract metadata (bran)
+        id: meta-bran
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/bran
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push bran
+        uses: docker/build-push-action@v5
+        with:
+          context: ./bran
+          push: true
+          tags: ${{ steps.meta-bran.outputs.tags }}
+          labels: ${{ steps.meta-bran.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to Kubernetes ─────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > /tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+
+      - name: Inject secrets into manifests
+        run: |
+          # Use envsubst to inject real secrets at deploy time
+          export HODOR_SECRET=${{ secrets.HODOR_SECRET_KEY }}
+          export BRAN_SECRET=${{ secrets.BRAN_DJANGO_SECRET_KEY }}
+          envsubst < k8s/hodor/configmap.yaml | kubectl apply -f -
+          envsubst < k8s/bran/bran-all.yaml | kubectl apply -f -
+
+      - name: Deploy hodor
+        run: |
+          SHA=${{ github.sha }}
+          kubectl set image deployment/hodor \
+            hodor=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/hodor:${SHA} \
+            --record
+
+      - name: Deploy bran
+        run: |
+          SHA=${{ github.sha }}
+          kubectl set image deployment/bran \
+            bran=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/bran:${SHA} \
+            --record
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/hodor --timeout=5m
+          kubectl rollout status deployment/bran --timeout=5m
+
+      - name: Smoke test
+        run: |
+          INGRESS_IP=$(kubectl get ingress fampay-ingress \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          curl -f "http://${INGRESS_IP}/hodor/" || exit 1
+          curl -f "http://${INGRESS_IP}/bran/" || exit 1
+          echo "Smoke tests passed!"

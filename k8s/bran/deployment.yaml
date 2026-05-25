@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bran
+  labels:
+    app: bran
+    version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bran
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: bran
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: bran
+
+      containers:
+        - name: bran
+          image: fampay/bran:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: bran.settings
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: bran-config
+                  key: APP_ENV
+            - name: APP_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: bran-config
+                  key: APP_VERSION
+            # Bran reaches hodor via internal k8s DNS
+            - name: HODOR_INTERNAL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bran-config
+                  key: HODOR_INTERNAL_URL
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bran-secrets
+                  key: django_secret_key
+            - name: ALLOWED_HOSTS
+              valueFrom:
+                configMapKeyRef:
+                  name: bran-config
+                  key: ALLOWED_HOSTS
+          livenessProbe:
+            httpGet:
+              path: /bran/health/
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /bran/ready/
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false

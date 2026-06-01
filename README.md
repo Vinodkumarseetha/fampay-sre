@@ -555,3 +555,35 @@ Watch Grafana at http://localhost:3000 for real-time request rate, error rate, a
 ### Programming role models
 
 Russ Cox (Go toolchain), Kelsey Hightower (Kubernetes advocacy and clarity of explanation), and Mitchell Hashimoto (HashiCorp tooling philosophy: boring technology that works).
+
+
+
+for minikube k8s 
+
+# Start minikube
+minikube start
+
+# Point Docker to minikube daemon
+minikube docker-env | Invoke-Expression
+
+# Build images inside minikube
+docker build -t fampay/hodor:latest ./hodor
+docker build -t fampay/bran:latest ./bran
+
+# Deploy everything
+kubectl apply -f k8s/ -R
+
+# Start tunnel (run in separate window)
+minikube tunnel
+
+
+# hodor
+curl http://127.0.0.1/hodor/
+curl http://127.0.0.1/hodor/health
+
+# bran
+curl http://127.0.0.1/bran/
+curl http://127.0.0.1/bran/health/
+
+# prove bran→hodor works
+curl http://127.0.0.1/bran/reach-hodor/

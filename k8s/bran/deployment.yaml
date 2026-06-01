@@ -35,7 +35,7 @@ spec:
       containers:
         - name: bran
           image: fampay/bran:latest
-          imagePullPolicy: Always
+          imagePullPolicy: Never #Always
           ports:
             - containerPort: 8000
           env:

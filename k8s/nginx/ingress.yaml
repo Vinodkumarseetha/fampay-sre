@@ -3,7 +3,7 @@ kind: Ingress
 metadata:
   name: fampay-ingress
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "5"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
     nginx.ingress.kubernetes.io/limit-rps: "100"
@@ -12,15 +12,15 @@ spec:
   rules:
     - http:
         paths:
-          - path: /hodor(/|$)(.*)
-            pathType: Prefix
+          - path: /hodor.*
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: hodor-service
                 port:
                   number: 8080
-          - path: /bran(/|$)(.*)
-            pathType: Prefix
+          - path: /bran.*
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: bran-service
